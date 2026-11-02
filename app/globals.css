@@ -1,0 +1,109 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--font-geist), 'Geist', system-ui, sans-serif;
+  --font-display: var(--font-chakra), 'Chakra Petch', sans-serif;
+  --color-team-blue: var(--team-blue);
+  --color-team-orange: var(--team-orange);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+:root {
+  color-scheme: dark;
+  --background: #070b15;
+  --foreground: #eef2f8;
+  --card: #0f1626;
+  --card-foreground: #eef2f8;
+  --popover: #0f1626;
+  --popover-foreground: #eef2f8;
+  --primary: #ff8a1f;
+  --primary-foreground: #070b15;
+  --secondary: #172036;
+  --secondary-foreground: #eef2f8;
+  --muted: #172036;
+  --muted-foreground: #8b97ad;
+  --accent: #2f7bff;
+  --accent-foreground: #eef2f8;
+  --destructive: #ff4d4d;
+  --border: rgba(238, 242, 248, 0.12);
+  --input: rgba(238, 242, 248, 0.16);
+  --ring: #2f7bff;
+  --team-blue: #2f7bff;
+  --team-orange: #ff8a1f;
+  --radius: 0.375rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.animate-pop {
+  animation: pop-in 1.3s ease-out forwards;
+}
+
+@keyframes goal-slam {
+  0% {
+    opacity: 0;
+    transform: scale(2.4) skewX(-8deg);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1) skewX(-8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1.04) skewX(-8deg);
+  }
+}
+
+.animate-goal {
+  animation: goal-slam 3s cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+}
