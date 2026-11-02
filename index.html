@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rocket League Style Clone</title>
+  <style>
+    :root {
+      --bg1: #081420;
+      --bg2: #0d1d2d;
+      --field-green: #11914d;
+      --line: rgba(255,255,255,0.9);
+      --goal-blue: rgba(82, 203, 255, 0.28);
+      --goal-orange: rgba(255, 165, 88, 0.28);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: radial-gradient(circle at 50% 25%, #173b5e, #050c16 65%);
+      color: white;
+      font-family: Arial, Helvetica, sans-serif;
+      overflow: hidden;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    #game-wrap {
+      position: relative;
+      width: min(96vw, 1260px);
+      aspect-ratio: 16 / 9;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 2px solid rgba(255,255,255,0.12);
+      box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+      background: #071019;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: #0d8b52;
+    }
+
+    #hud {
+      position: absolute;
+      left: 0; right: 0; top: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: min(68%, 760px);
+      margin: auto;
+      pointer-events: none;
+      z-index: 10;
+      text-shadow: 0 3px 10px rgba(0,0,0,0.45);
+    }
+
+    .score-box {
+      min-width: 115px;
+      text-align: center;
+      font-weight: 900;
+      font-size: clamp(24px, 2vw, 42px);
+      letter-spacing: 2px;
+      padding: 8px 16px;
+      border-radius: 12px;
+      background: rgba(7, 16, 22, 0.42);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .timer-box {
+      font-weight: 900;
+      font-size: clamp(18px, 1.3vw, 30px);
+      letter-spacing: 1px;
+      padding: 8px 16px;
+      border-radius: 12px;
+      background: rgba(7,16,22,0.42);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+
+    #center-banner {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      padding: 16px 26px;
+      border-radius: 14px;
+      background: rgba(8, 17, 31, 0.4);
+      border: 1px solid rgba(255,255,255,0.15);
+      font-weight: 900;
+      font-size: clamp(22px, 2vw, 38px);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #f4f9ff;
+      text-shadow: 0 4px 10px rgba(0,0,0,0.35);
+      z-index: 12;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      pointer-events: none;
+    }
+
+    #instructions {
+      position: absolute;
+      left: 18px;
+      bottom: 18px;
+      z-index: 10;
+      background: rgba(8, 17, 31, 0.34);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.9);
+      pointer-events: none;
+    }
+
+    @media (max-width: 760px) {
+      #instructions {
+        font-size: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="game-wrap">
+    <div id="hud">
+      <div id="blueScore" class="score-box">0</div>
+      <div id="timer" class="timer-box">01:30</div>
+      <div id="orangeScore" class="score-box">0</div>
+    </div>
+    <div id="center-banner">Kickoff</div>
+    <div id="instructions">
+      Drive: WASD / Arrows · Boost: Shift / Space · Jump: W + Space or Up + Space
+    </div>
+    <canvas id="gameCanvas" width="1200" height="675"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const centerBanner = document.getElementById("center-banner");
+    const blueScoreEl = document.getElementById("blueScore");
+    const orangeScoreEl = document.getElementById("orangeScore");
+    const timerEl = document.getElementById("timer");
+
+    const WORLD = {
+      width: 1400,
+      height: 800,
+      goalHeight: 210,
+      goalDepth: 60
+    };
+
+    const keys = {};
+    const input = {
+      left: false,
+      right: false,
+      up: false,
+      down: false,
+      boost: false,
+      jump: false
+    };
+
+    const camera = {
+      x: WORLD.width * 0.5,
+      y: WORLD.height * 0.5,
+      zoom: 1,
+      targetX: WORLD.width * 0.5,
+      targetY: WORLD.height * 0.5,
+      shake: 0
+    };
+
+    let gameTime = 0;
+    let matchTime = 90;
+    let matchStarted = false;
+
+    const state = {
+      score: { blue: 0, orange: 0 },
+      ball: null,
+      cars: [],
+      pads: [],
+      kickoffTimer: 0,
+      phase: "kickoff",
+      activeMessage: ""
+    };
+
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function dist(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return Math.hypot(dx, dy);
+    }
+
+    function playTone(freq = 220, duration = 0.09, volume = 0.02) {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const actx = new AudioCtx();
+        const osc = actx.createOscillator();
+        const gain = actx.createGain();
+        osc.type = "triangle";
+        osc.frequency.value = freq;
+        gain.gain.value = volume;
+        osc.connect(gain);
+        gain.connect(actx.destination);
+        osc.start();
+        osc.stop(actx.currentTime + duration);
+      } catch {}
+    }
+
+    function setBanner(msg, duration = 0.9) {
+      centerBanner.textContent = msg;
+      centerBanner.style.opacity = "1";
+      centerBanner.style.transition = "opacity 0.15s ease";
+      clearTimeout(setBanner._timer);
+      setBanner._timer = setTimeout(() => {
+        centerBanner.style.opacity = "0";
+      }, duration * 1000);
+    }
+
+    function createBoostPads() {
+      return [
+        { x: WORLD.width * 0.22, y: WORLD.height * 0.32, r: 28, active: true, glow: 0 },
+        { x: WORLD.width * 0.78, y: WORLD.height * 0.32, r: 28, active: true, glow: 0 },
+        { x: WORLD.width * 0.22, y: WORLD.height * 0.68, r: 28, active: true, glow: 0 },
+        { x: WORLD.width * 0.78, y: WORLD.height * 0.68, r: 28, active: true, glow: 0 },
+        { x: WORLD.width * 0.5, y: WORLD.height * 0.5, r: 30, active: true, glow: 0 }
+      ];
+    }
+
+    function createBall() {
+      return {
+        x: WORLD.width * 0.5,
+        y: WORLD.height * 0.5,
+        radius: 18,
+        vx: 0,
+        vy: 0,
+        lastTouchedBy: null
+      };
+    }
+
+    function createCar(team, x, y, angle, isBot = false) {
+      return {
+        team,
+        x, y,
+        angle,
+        vx: 0,
+        vy: 0,
+        radius: 28,
+        turnRate: 2.2,
+        boost: 100,
+        maxBoost: 100,
+        throttle: 0,
+        steering: 0,
+        angularVel: 0,
+        grounded: true,
+        jumpVel: 0,
+        airTime: 0,
+        boostCooldown: 0,
+        isBot
+      };
+    }
+
+    function resetPosition() {
+      const blueStart = { x: WORLD.width * 0.32, y: WORLD.height * 0.5 };
+      const orangeStart = { x: WORLD.width * 0.68, y: WORLD.height * 0.5 };
+
+      // player car
+      const player = state.cars[0];
+      player.x = blueStart.x;
+      player.y = blueStart.y;
+      player.angle = 0;
+      player.vx = 0;
+      player.vy = 0;
+      player.angularVel = 0;
+      player.boost = 100;
+      player.grounded = true;
+      player.jumpVel = 0;
+      player.airTime = 0;
+
+      // bots
+      for (let i = 1; i < state.cars.length; i++) {
+        const bot = state.cars[i];
+        bot.x = i === 1 ? orangeStart.x - 190 : orangeStart.x + 190;
+        bot.y = i === 1 ? orangeStart.y - 110 : orangeStart.y + 110;
+        bot.angle = Math.PI;
+        bot.vx = 0;
+        bot.vy = 0;
+        bot.angularVel = 0;
+        bot.boost = 100;
+        bot.grounded = true;
+        bot.jumpVel = 0;
+        bot.airTime = 0;
+      }
+    }
+
+    function resetBall() {
+      state.ball.x = WORLD.width * 0.5;
+      state.ball.y = WORLD.height * 0.5;
+      state.ball.vx = 0;
+      state.ball.vy = 0;
+      state.ball.lastTouchedBy = null;
+    }
+
+    function kickoffSequence() {
+      state.phase = "kickoff";
+      state.kickoffTimer = 2.2;
+      setBanner("Kickoff", 1.3);
+      resetBall();
+      resetPosition();
+    }
+
+    function initGame() {
+      state.pads = createBoostPads();
+      state.ball = createBall();
+      state.cars = [
+        createCar("blue", WORLD.width * 0.3, WORLD.height * 0.5, 0, false),
+        createCar("orange", WORLD.width * 0.75, WORLD.height * 0.4, Math.PI, true),
+        createCar("orange", WORLD.width * 0.75, WORLD.height * 0.6, Math.PI, true)
+      ];
+      kickoffSequence();
+      matchStarted = true;
+      matchTime = 90;
+      state.score.blue = 0;
+      state.score.orange = 0;
+    }
+
+    function updateHUD() {
+      blueScoreEl.textContent = state.score.blue;
+      orangeScoreEl.textContent = state.score.orange;
+
+      const total = Math.max(0, Math.ceil(matchTime));
+      const minutes = Math.floor(total / 60);
+      const secs = total % 60;
+      timerEl.textContent = `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    }
+
+    function applyBoostPad(car, pad) {
+      if (Math.hypot(car.x - pad.x, car.y - pad.y) < pad.r + car.radius + 12) {
+        if (car.boost < car.maxBoost) {
+          car.boost = Math.min(car.maxBoost, car.boost + 26);
+        }
+        car.vx *= 1.1;
+        car.vy *= 1.1;
+      }
+    }
+
+    function handlePlayerInput(dt) {
+      const car = state.cars[0];
+      const forward = (keys.w || keys.arrowup) ? 1 : 0;
+      const backward = (keys.s || keys.arrowdown) ? 1 : 0;
+      const left = (keys.a || keys.arrowleft) ? 1 : 0;
+      const right = (keys.d || keys.arrowright) ? 1 : 0;
+
+      const throttle = forward - backward;
+      const steer = right - left;
+
+      const accel = 420;
+      const turnStrength = 2.8;
+      const forwardX = Math.cos(car.angle);
+      const forwardY = Math.sin(car.angle);
+
+      car.steering = steer;
+      car.throttle = throttle;
+
+      // accelerate
+      if (Math.abs(throttle) > 0.01) {
+        car.vx += forwardX * accel * throttle * dt;
+        car.vy += forwardY * accel * throttle * dt;
+      }
+
+      // steering and rotation
+      car.angularVel += steer * turnStrength * dt * (car.grounded ? 1 : 0.35);
+      car.angularVel *= car.grounded ? 0.82 : 0.96;
+      car.angle += car.angularVel * dt * 60;
+
+      // speed cap
+      const maxSpeed = 420;
+      const speed = Math.hypot(car.vx, car.vy);
+      if (speed > maxSpeed) {
+        const s = maxSpeed / speed;
+        car.vx *= s;
+        car.vy *= s;
+      }
+
+      // boost
+      const boostPressed = keys.shift || keys[" "] || keys.spacebar;
+      if (boostPressed && car.boost > 0) {
+        car.vx += forwardX * 320 * dt;
+        car.vy += forwardY * 320 * dt;
+        car.boost = Math.max(0, car.boost - 52 * dt);
+      } else {
+        car.boost = Math.min(car.maxBoost, car.boost + 16 * dt);
+      }
+
+      // jump
+      if ((keys[" "] || keys.spacebar) && car.grounded) {
+        car.grounded = false;
+        car.jumpVel = 410;
+      }
+
+      // flips while airborne
+      if (!car.grounded && (keys.a || keys.d || keys.arrowleft || keys.arrowright)) {
+        const flipDir = (keys.a || keys.arrowleft) ? -1 : 1;
+        car.angularVel += flipDir * 10 * dt;
+      }
+
+      if (!car.grounded) {
+        car.jumpVel -= 850 * dt;
+        car.y += car.jumpVel * dt * 0.45;
+        if (car.jumpVel <= 0) {
+          car.grounded = true;
+          car.jumpVel = 0;
+        }
+      }
+    }
+
+    function updateAI(dt, car, targetBall) {
+      if (car === state.cars[0]) return;
+
+      const dx = targetBall.x - car.x;
+      const dy = targetBall.y - car.y;
+      const targetAngle = Math.atan2(dy, dx);
+      const angleDiff = Math.atan2(Math.sin(targetAngle - car.angle), Math.cos(targetAngle - car.angle));
+
+      const desiredThrottle = ((Math.abs(angleDiff) < 1.1) ? 1 : 0.25) * (dist(car, targetBall) > 80 ? 1 : 0.4);
+      const steer = clamp(angleDiff * 1.6, -1, 1);
+
+      car.steering = steer;
+      car.throttle = desiredThrottle;
+
+      car.angularVel += steer * 2.4 * dt * 60;
+      car.angularVel *= 0.82;
+      car.angle += car.angularVel * dt;
+
+      const accel = 500;
+      car.vx += Math.cos(car.angle) * accel * desiredThrottle * dt;
+      car.vy += Math.sin(car.angle) * accel * desiredThrottle * dt;
+
+      // strong defensive behavior
+      const ownGoalX = car.team === "blue" ? WORLD.width * 0.12 : WORLD.width * 0.88;
+      const ownGoalY = WORLD.height * 0.5;
+
+      if (targetBall.x < WORLD.width * 0.45 && car.team === "blue") {
+        const defendX = ownGoalX + (car.team === "blue" ? 140 : -140);
+        const defendY = ownGoalY;
+        const defDx = defendX - car.x;
+        const defDy = defendY - car.y;
+        const goalAng = Math.atan2(defDy, defDx);
+        const goalDiff = Math.atan2(Math.sin(goalAng - car.angle), Math.cos(goalAng - car.angle));
+
+        car.angularVel += clamp(goalDiff * 2.2, -1, 1) * 0.12;
+        car.vx += Math.cos(car.angle) * 280 * dt;
+        car.vy += Math.sin(car.angle) * 280 * dt;
+      }
+
+      const speed = Math.hypot(car.vx, car.vy);
+      const maxSpeed = 420;
+      if (speed > maxSpeed) {
+        const s = maxSpeed / speed;
+        car.vx *= s;
+        car.vy *= s;
+      }
+
+      // boost logic
+      const shouldBoost = dist(car, targetBall) > 200 && Math.abs(angleDiff) < 0.8 && car.boost > 10;
+      if (shouldBoost) {
+        car.vx += Math.cos(car.angle) * 280 * dt;
+        car.vy += Math.sin(car.angle) * 280 * dt;
+        car.boost = Math.max(0, car.boost - 38 * dt);
+      } else {
+        car.boost = Math.min(100, car.boost + 16 * dt);
+      }
+
+      // jump on good opportunity
+      if (dist(car, targetBall) < 95 && !car.grounded) {
+        car.grounded = false;
+        car.jumpVel = 300;
+      }
+      if (dist(car, targetBall) < 72 && car.grounded) {
+        car.grounded = false;
+        car.jumpVel = 360;
+      }
+
+      if (!car.grounded) {
+        car.jumpVel -= 850 * dt;
+        car.y += car.jumpVel * dt * 0.45;
+        if (car.jumpVel <= 0) {
+          car.grounded = true;
+          car.jumpVel = 0;
+        }
+      }
+    }
+
+    function clampToField(car) {
+      const margin = 32;
+      const left = margin;
+      const right = WORLD.width - margin;
+      const top = margin;
+      const bottom = WORLD.height - margin;
+
+      if (car.x < left) {
+        car.x = left;
+        car.vx *= -0.18;
+      }
+      if (car.x > right) {
+        car.x = right;
+        car.vx *= -0.18;
+      }
+      if (car.y < top) {
+        car.y = top;
+        car.vy *= -0.18;
+      }
+      if (car.y > bottom) {
+        car.y = bottom;
+        car.vy *= -0.18;
+      }
+    }
+
+    function handleCarMove(dt, car) {
+      car.x += car.vx * dt;
+      car.y += car.vy * dt;
+
+      if (!car.grounded && car.jumpVel !== 0) {
+        car.y += car.jumpVel * dt * 0.48;
+      }
+
+      clampToField(car);
+
+      // friction
+      const drag = car.grounded ? 0.992 : 0.998;
+      car.vx *= drag;
+      car.vy *= drag;
+
+      if (Math.abs(car.vx) < 0.02) car.vx = 0;
+      if (Math.abs(car.vy) < 0.02) car.vy = 0;
+
+      // wall bounce
+      if (car.x < 0 || car.x > WORLD.width) {
+        car.vx *= -0.35;
+      }
+      if (car.y < 0 || car.y > WORLD.height) {
+        car.vy *= -0.35;
+      }
+
+      // boxes near goals
+      const goalTop = WORLD.height * 0.5 - WORLD.goalHeight / 2;
+      const goalBottom = WORLD.height * 0.5 + WORLD.goalHeight / 2;
+
+      if (car.y < goalTop || car.y > goalBottom) {
+        // mild push to keep cars in field when close to goal
+      }
+    }
+
+    function resolveBallCarCollision(car) {
+      const dx = state.ball.x - car.x;
+      const dy = state.ball.y - car.y;
+      const distVal = Math.hypot(dx, dy);
+      const minDist = state.ball.radius + car.radius;
+
+      if (distVal < minDist) {
+        const nx = dx / (distVal || 1);
+        const ny = dy / (distVal || 1);
+
+        const overlap = minDist - distVal;
+        state.ball.x += nx * overlap;
+        state.ball.y += ny * overlap;
+
+        const relVelX = state.ball.vx - car.vx;
+        const relVelY = state.ball.vy - car.vy;
+        const velAlongNormal = relVelX * nx + relVelY * ny;
+
+        if (velAlongNormal < 0) {
+          const coeff = 1.45;
+          const impulse = -(velAlongNormal * coeff);
+          state.ball.vx += nx * impulse;
+          state.ball.vy += ny * impulse;
+          car.vx -= nx * impulse * 0.18;
+          car.vy -= ny * impulse * 0.18;
+        }
+
+        state.ball.vx += car.vx * 0.12;
+        state.ball.vy += car.vy * 0.12;
+
+        state.ball.lastTouchedBy = car.team;
+      }
+    }
+
+    function handleBallPhysics(dt) {
+      state.ball.x += state.ball.vx * dt;
+      state.ball.y += state.ball.vy * dt;
+
+      state.ball.vx *= 0.995;
+      state.ball.vy *= 0.995;
+
+      // ball wall collision
+      const left = state.ball.radius;
+      const right = WORLD.width - state.ball.radius;
+      const top = state.ball.radius;
+      const bottom = WORLD.height - state.ball.radius;
+
+      if (state.ball.x < left) {
+        state.ball.x = left;
+        state.ball.vx *= -0.94;
+      }
+      if (state.ball.x > right) {
+        state.ball.x = right;
+        state.ball.vx *= -0.94;
+      }
+      if (state.ball.y < top) {
+        state.ball.y = top;
+        state.ball.vy *= -0.94;
+      }
+      if (state.ball.y > bottom) {
+        state.ball.y = bottom;
+        state.ball.vy *= -0.94;
+      }
+
+      // ball to car collisions
+      for (const car of state.cars) {
+        resolveBallCarCollision(car);
+      }
+
+      // boost pad interaction with ball
+      for (const pad of state.pads) {
+        if (Math.hypot(state.ball.x - pad.x, state.ball.y - pad.y) < pad.r + state.ball.radius + 10) {
+          const pushX = (state.ball.x - pad.x) * 0.04;
+          const pushY = (state.ball.y - pad.y) * 0.04;
+          state.ball.vx += pushX * 10;
+          state.ball.vy += pushY * 10;
+        }
+      }
+
+      // goal check
+      const goalTop = WORLD.height * 0.5 - WORLD.goalHeight / 2;
+      const goalBottom = WORLD.height * 0.5 + WORLD.goalHeight / 2;
+
+      const inBlueGoal = state.ball.x - state.ball.radius < 0 && state.ball.y > goalTop && state.ball.y < goalBottom;
+      const inOrangeGoal = state.ball.x + state.ball.radius > WORLD.width && state.ball.y > goalTop && state.ball.y < goalBottom;
+
+      if (inBlueGoal) {
+        scoreGoal("orange");
+      } else if (inOrangeGoal) {
+        scoreGoal("blue");
+      }
+    }
+
+    function scoreGoal(side) {
+      if (side === "blue") {
+        state.score.blue += 1;
+      } else {
+        state.score.orange += 1;
+      }
+
+      playTone(side === "blue" ? 420 : 220, 0.18, 0.04);
+      setBanner(side === "blue" ? "Blue Scores!" : "Orange Scores!", 1.5);
+
+      setTimeout(() => {
+        kickoffSequence();
+      }, 550);
+    }
+
+    function updateKickoff(dt) {
+      if (state.phase === "kickoff") {
+        state.kickoffTimer -= dt;
+        if (state.kickoffTimer <= 0) {
+          state.phase = "play";
+          setBanner("Go!", 0.7);
+          state.ball.vx = (Math.random() - 0.5) * 120;
+          state.ball.vy = (Math.random() - 0.5) * 120;
+        }
+      }
+    }
+
+    function updateCamera(dt) {
+      const player = state.cars[0];
+      const targetX = player.x;
+      const targetY = player.y;
+
+      camera.targetX = targetX;
+      camera.targetY = targetY;
+
+      camera.x = lerp(camera.x, camera.targetX, 0.12);
+      camera.y = lerp(camera.y, camera.targetY, 0.12);
+
+      const maxX = WORLD.width - canvas.width * 0.5;
+      const maxY = WORLD.height - canvas.height * 0.5;
+
+      camera.x = clamp(camera.x, canvas.width * 0.5, maxX);
+      camera.y = clamp(camera.y, canvas.height * 0.5, maxY);
+    }
+
+    function drawBackground() {
+      // field
+      ctx.fillStyle = "#0c8d52";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // center field lines drawn using world coords transformed by camera
+      ctx.save();
+      ctx.translate(-camera.x + canvas.width * 0.5, -camera.y + canvas.height * 0.5);
+
+      // field border
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(0, 0, WORLD.width, WORLD.height);
+
+      // center circle
+      ctx.beginPath();
+      ctx.arc(WORLD.width / 2, WORLD.height / 2, 90, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // center line
+      ctx.beginPath();
+      ctx.moveTo(WORLD.width / 2, 0);
+      ctx.lineTo(WORLD.width / 2, WORLD.height);
+      ctx.stroke();
+
+      // goals
+      ctx.fillStyle = "rgba(82, 203, 255, 0.25)";
+      ctx.fillRect(-WORLD.goalDepth, WORLD.height * 0.5 - WORLD.goalHeight / 2, WORLD.goalDepth, WORLD.goalHeight);
+
+      ctx.fillStyle = "rgba(255, 165, 88, 0.25)";
+      ctx.fillRect(WORLD.width, WORLD.height * 0.5 - WORLD.goalHeight / 2, WORLD.goalDepth, WORLD.goalHeight);
+
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(-WORLD.goalDepth, WORLD.height * 0.5 - WORLD.goalHeight / 2, WORLD.goalDepth, WORLD.goalHeight);
+      ctx.strokeRect(WORLD.width, WORLD.height * 0.5 - WORLD.goalHeight / 2, WORLD.goalDepth, WORLD.goalHeight);
+
+      // boost pads
+      for (const pad of state.pads) {
+        ctx.beginPath();
+        ctx.fillStyle = "#f4f2be";
+        ctx.shadowColor = "#fff";
+        ctx.shadowBlur = 18;
+        ctx.arc(pad.x, pad.y, pad.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      // field markings
+      ctx.strokeStyle = "rgba(255,255,255,0.6)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(80, 0); ctx.lineTo(80, 30);
+      ctx.moveTo(WORLD.width - 80, 0); ctx.lineTo(WORLD.width - 80, 30);
+      ctx.moveTo(80, WORLD.height); ctx.lineTo(80, WORLD.height - 30);
+      ctx.moveTo(WORLD.width - 80, WORLD.height); ctx.lineTo(WORLD.width - 80, WORLD.height - 30);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawBall() {
+      const x = state.ball.x - camera.x + canvas.width * 0.5;
+      const y = state.ball.y - camera.y + canvas.height * 0.5;
+
+      ctx.beginPath();
+      ctx.fillStyle = "#edf3ff";
+      ctx.arc(x, y, state.ball.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#dfe9ff";
+      ctx.arc(x, y, state.ball.radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    function drawCar(car) {
+      const x = car.x - camera.x + canvas.width * 0.5;
+      const y = car.y - camera.y + canvas.height * 0.5;
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(car.angle);
+
+      // shadow
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ctx.beginPath();
+      ctx.ellipse(0, 14, 26, 18, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // body
+      ctx.fillStyle = car.team === "blue" ? "#5ad5ff" : "#ff9f5a";
+      ctx.fillRect(-22, -14, 44, 28);
+
+      // roof
+      ctx.fillStyle = car.team === "blue" ? "#0b79bf" : "#b94d00";
+      ctx.fillRect(-12, -8, 24, 16);
+
+      // wheels
+      ctx.fillStyle = "#1b1f26";
+      ctx.fillRect(-24, -19, 8, 8);
+      ctx.fillRect(16, -19, 8, 8);
+      ctx.fillRect(-24, 11, 8, 8);
+      ctx.fillRect(16, 11, 8, 8);
+
+      // front indicator
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.moveTo(20, 0);
+      ctx.lineTo(30, 5);
+      ctx.lineTo(30, -5);
+      ctx.closePath();
+      ctx.fill();
+
+      // boost bar
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(-30, -34, 60, 7);
+      ctx.fillStyle = car.team === "blue" ? "#59d5ff" : "#ffb76a";
+      ctx.fillRect(-30, -34, 60 * (car.boost / car.maxBoost), 7);
+
+      ctx.restore();
+    }
+
+    function render() {
+      drawBackground();
+
+      // draw ball and cars
+      for (const car of state.cars) drawCar(car);
+      drawBall();
+
+      // goal overlays maybe
+      // none
+    }
+
+    function update(dt) {
+      gameTime += dt;
+      if (state.phase === "play") {
+        matchTime -= dt;
+        if (matchTime <= 0) {
+          matchTime = 90;
+          kickoffSequence();
+        }
+      }
+
+      updateHUD();
+
+      if (state.phase === "kickoff") {
+        updateKickoff(dt);
+      }
+
+      // player
+      handlePlayerInput(dt);
+      handleCarMove(dt, state.cars[0]);
+
+      // AI
+      for (let i = 1; i < state.cars.length; i++) {
+        updateAI(dt, state.cars[i], state.ball);
+        handleCarMove(dt, state.cars[i]);
+      }
+
+      // ball
+      handleBallPhysics(dt);
+
+      // boost pads
+      for (const car of state.cars) {
+        for (const pad of state.pads) {
+          applyBoostPad(car, pad);
+        }
+      }
+
+      // camera
+      updateCamera(dt);
+    }
+
+    function gameLoop(ts) {
+      const dt = Math.min(0.033, (ts - (gameLoop.lastTs || ts)) / 1000);
+      gameLoop.lastTs = ts;
+
+      update(dt);
+      render();
+
+      requestAnimationFrame(gameLoop);
+    }
+    gameLoop.lastTs = 0;
+
+    document.addEventListener("keydown", (e) => {
+      const key = e.key.toLowerCase();
+      if (["arrowup","arrowdown","arrowleft","arrowright"," "].includes(key)) {
+        e.preventDefault();
+      }
+      keys[key] = true;
+      if (key === "shift") keys.shift = true;
+      if (key === " ") keys[" "] = true;
+      if (key === "spacebar") keys.spacebar = true;
+    });
+
+    document.addEventListener("keyup", (e) => {
+      const key = e.key.toLowerCase();
+      keys[key] = false;
+      if (key === "shift") keys.shift = false;
+      if (key === " ") keys[" "] = false;
+      if (key === "spacebar") keys.spacebar = false;
+    });
+
+    initGame();
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
